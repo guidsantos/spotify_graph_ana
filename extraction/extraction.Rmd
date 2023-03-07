@@ -1,0 +1,173 @@
+---
+title: "Extract Spotify Data"
+output: html_notebook
+---
+
+
+Imports
+```{r}
+install.packages('spotifyr')
+install.packages('plyr')
+install.packages('dplyr')
+install.packages('tidyverse')
+```
+
+```{r}
+library(spotifyr)
+library(plyr)
+library(dplyr)
+library(tidyverse)
+```
+
+Connect to Spotify API
+```{r}
+id <- 'c8ae918ce4e9477eafb0e808702aa4ac'
+secret <- '6aee7becd94d40a7aacab4b1cda30940'
+Sys.setenv(SPOTIFY_CLIENT_ID = id)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = secret)
+access_token <- get_spotify_access_token()
+```
+
+Get all tracks of top50 playlists
+```{r}
+br <- get_playlist_tracks('37i9dQZEVXbMXbN3EUUhlg')
+br$toplist.country <- 'Brazil'
+
+global <- get_playlist_tracks('37i9dQZEVXbMDoHDwVN2tF')
+global$toplist.country <- 'Global'
+
+usa <- get_playlist_tracks('37i9dQZEVXbLRQDuF5jeBp')
+usa$toplist.country <- 'USA'
+
+mexico <- get_playlist_tracks('37i9dQZEVXbO3qyFxbkOE1')
+mexico$toplist.country <- 'Mexico'
+
+japan <- get_playlist_tracks('37i9dQZEVXbKXQ4mDTEBXq')
+japan$toplist.country <- 'Japan'
+
+korea <- get_playlist_tracks('37i9dQZEVXbNxXF4SkHj9F')
+korea$toplist.country <- 'Korea'
+
+portugual <- get_playlist_tracks('37i9dQZEVXbKyJS56d1pgi')
+portugual$toplist.country <- 'Portugual'
+
+spain <- get_playlist_tracks('37i9dQZEVXbNFJfN1Vw8d9')
+spain$toplist.country <- 'Spain'
+
+france <- get_playlist_tracks('37i9dQZEVXbIPWwFssbupI')
+france$toplist.country <- 'France'
+
+uk <- get_playlist_tracks('37i9dQZEVXbLnolsZ8PSNw')
+uk$toplist.country <- 'United Kingdom'
+
+```
+
+Union top50 tracks in unique dataframe and write data in csv
+```{r}
+raw_toptracks_df <- dplyr::union(dplyr::union(dplyr::union(union(br,usa),dplyr::union(mexico,global)),
+                                 dplyr::union(dplyr::union(spain,portugual),dplyr::union(japan,korea))),
+                    dplyr::union(france,uk))
+
+select_toptracks_df <- raw_toptracks_df %>% select(track.id, track.name, track.popularity, toplist.country)
+
+write.csv(select_toptracks_df, 'toptracks.csv')
+select_toptracks_df
+```
+
+Get all artists id and names
+```{r}
+artists_id_df <- raw_toptracks_df$track.artists %>% reduce(union) %>% select(id, name) 
+colnames(artists_id_df) <- c('artist.id','artist.name') 
+artists_id_df <- unique(artists_id_df)
+artists_id_df
+```
+
+Create column artist.id in toptracks_df
+```{r}
+for (x in 1:length(raw_toptracks_df$track.artists)) {
+  artist_id <- raw_toptracks_df$track.artists[[x]][2] %>% mutate(id = paste(id, collapse = ",")) 
+  
+  raw_toptracks_df$artist.id[x] <- head(artist_id, 1)$id
+}
+
+explode_toptracks_df <- separate_rows(raw_toptracks_df, artist.id)
+```
+
+Get all metadata of artists
+```{r}
+artist_metadata_df <- union(union(union(union(get_artists(artists_id_df$artist.id[0:50]),
+                                        get_artists(artists_id_df$artist.id[51:100])),
+                                  union(get_artists(artists_id_df$artist.id[101:150]),
+                                        get_artists(artists_id_df$artist.id[151:200]))),
+                            union(get_artists(artists_id_df$artist.id[201:250]),
+                                  get_artists(artists_id_df$artist.id[251:300]))),
+                            get_artists(artists_id_df$artist.id[301:324]))
+
+```
+
+Select important data of artists
+```{r}
+select_artist_metadata_df <- artist_metadata_df %>% select(id, name, genres, followers.total, popularity)
+colnames(select_artist_metadata_df) <- c('artist.id',
+                                         'artist.name',
+                                         'artist.genres',
+                                         'artist.followes.total', 
+                                         'artist.popularity')
+```
+
+
+Create dataframe with all artists in top50 playlist
+```{r}
+join_toptracks_w_artist__df <- left_join(explode_toptracks_df, select_artist_metadata_df, by='artist.id')
+toptracks_artist_df <- join_toptracks_w_artist__df %>% select(track.id,
+                                                               artist.id, 
+                                                               track.name, 
+                                                               artist.name, 
+                                                               track.popularity, 
+                                                               artist.followes.total, 
+                                                               artist.popularity,
+                                                               toplist.country)
+
+write.csv(toptracks_artist_df, 'toptracks_artists.csv')
+toptracks_artist_df
+```
+
+Create dataframe with all genres of artists in top50 playlist
+```{r}
+raw_genres_df = join_toptracks_w_artist__df
+
+for (x in 1:length(raw_genres_df$artist.genres)) {
+  sanit_genre <- toString(raw_genres_df$artist.genres[x]) 
+  
+  sanit_genre <- gsub("\"","",sanit_genre)
+  
+  raw_genres_df$artist.genres[x] <- gsub("^c\\(|\\)$", "", sanit_genre)
+}
+
+explode_genres_df <- separate_rows(raw_genres_df, artist.genres,  sep = ",")
+explode_genres_df$artist.genres <- trimws(explode_genres_df$artist.genres, which = c('both'))
+```
+
+```{r}
+toptracks_artists_genres_df <- explode_genres_df %>% select(track.id,
+                                                             artist.id, 
+                                                             track.name, 
+                                                             artist.name, 
+                                                             track.popularity, 
+                                                             artist.genres,
+                                                             artist.followes.total, 
+                                                             artist.popularity,
+                                                             toplist.country) %>% filter(artist.genres != 'character(0' & artist.genres != 'list(')
+
+write.csv(toptracks_artists_genres_df, 'toptracks_artists_genres.csv')
+toptracks_artists_genres_df
+```
+
+
+
+
+
+
+
+
+
